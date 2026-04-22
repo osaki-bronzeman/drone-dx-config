@@ -217,14 +217,19 @@ const EQUIPMENT_TYPES = {
   // Monitors
   mon_jikkyo: { cat: 'monitor', label: '実況用モニタ', short: '実況', color: '#1e88e5', w: 80, h: 50 },
   mon_shinpan:{ cat: 'monitor', label: '審判用モニタ', short: '審判', color: '#039be5', w: 80, h: 50 },
+  mon_mc:     { cat: 'monitor', label: '司会用モニタ', short: '司会', color: '#7b1fa2', w: 80, h: 50 },
   mon_foh:    { cat: 'monitor', label: 'FOH用モニタ', short: 'FOH', color: '#00acc1', w: 80, h: 50 },
   mon_multi:  { cat: 'monitor', label: 'マルチV',     short: 'MV',  color: '#00897b', w: 84, h: 54 },
-  mon_stage:  { cat: 'monitor', label: 'ステージLED', short: 'LED', color: '#43a047', w: 92, h: 56 },
+  mon_player: { cat: 'monitor', label: '選手用モニタ', short: '選手', color: '#43a047', w: 84, h: 52 },
+  mon_screen: { cat: 'monitor', label: 'メインスクリーン', short: '画面', color: '#0d47a1', w: 110, h: 64 },
 
   // Processors
   proc_sw:    { cat: 'processor', label: 'スイッチャー', short: 'SW',  color: '#546e7a', w: 84, h: 46 },
   proc_mix:   { cat: 'processor', label: '音声ミキサー', short: 'MIX', color: '#6d4c41', w: 84, h: 46 },
   proc_pc:    { cat: 'processor', label: '配信PC',      short: 'PC',  color: '#212121', w: 72, h: 44 },
+  proc_pc_enz:{ cat: 'processor', label: '演出PC',      short: '演出', color: '#1b5e20', w: 72, h: 44 },
+  proc_pc_cap:{ cat: 'processor', label: '取込用PC',    short: '取込', color: '#004d40', w: 72, h: 44 },
+  proc_capt:  { cat: 'processor', label: 'HDMIキャプチャ', short: 'CAP', color: '#5d4037', w: 76, h: 40 },
   proc_rec:   { cat: 'processor', label: '収録機',       short: 'REC', color: '#424242', w: 72, h: 44 },
   proc_enc:   { cat: 'processor', label: 'エンコーダ',   short: 'ENC', color: '#37474f', w: 76, h: 44 },
 
@@ -236,14 +241,11 @@ const EQUIPMENT_TYPES = {
   other_ant:  { cat: 'other', label: '受信アンテナ', short: 'ANT', color: '#4527a0', w: 64, h: 36 }
 };
 
+// 本レースの配線はSDI／HDMIの2種類が基本。電源ライン用に「電源」も残す。
 const CABLE_TYPES = {
-  sdi:   { label: 'SDI',   color: '#2196f3', dash: null },
-  hdmi:  { label: 'HDMI',  color: '#4caf50', dash: null },
-  lan:   { label: 'LAN',   color: '#ffc107', dash: null },
-  power: { label: '電源',  color: '#f44336', dash: null },
-  fiber: { label: '光',    color: '#9c27b0', dash: null },
-  rf:    { label: 'RF無線', color: '#ff5722', dash: '6 4' },
-  audio: { label: '音声',  color: '#00bcd4', dash: null }
+  sdi:   { label: 'SDI',  color: '#2196f3', dash: null },
+  hdmi:  { label: 'HDMI', color: '#4caf50', dash: null },
+  power: { label: '電源', color: '#f44336', dash: '6 4' }
 };
 
 // ==================== State ====================
