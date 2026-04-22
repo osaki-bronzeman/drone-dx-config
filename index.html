@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>配信・配線配置設計ツール | JR東日本グループ ドローンDX CHAMPIONSHIP 2026</title>
+
+<!-- ▼▼▼ Firebase SDK（クラウド同期用） ▼▼▼ -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; background: #1a1d24; color: #e8eaed; overflow: hidden; }
+
+  .app { display: grid; grid-template-rows: 56px 1fr; height: 100vh; }
+
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 16px; background: #0f1115; border-bottom: 1px solid #2a2e38; }
+  .toolbar h1 { font-size: 14px; font-weight: 600; margin: 0 16px 0 0; color: #9aa0a6; letter-spacing: .02em; }
+  .toolbar .sep { width: 1px; height: 24px; background: #2a2e38; margin: 0 4px; }
+  .btn { background: #252932; color: #e8eaed; border: 1px solid #353a45; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; }
+  .btn:hover { background: #2e3340; border-color: #4a5160; }
+  .btn.primary { background: #1a73e8; border-color: #1a73e8; }
+  .btn.primary:hover { background: #1967d2; }
+  .btn.warn { background: #c5221f; border-color: #c5221f; }
+  .btn.warn:hover { background: #a50e0e; }
+  .btn.ghost { background: transparent; }
+  .btn input[type="file"] { display: none; }
+
+  /* Body layout */
+  .body { display: grid; grid-template-columns: 220px 1fr 260px; height: calc(100vh - 56px); min-height: 0; }
+
+  /* Sidebars */
+  .sidebar { background: #14171d; border-right: 1px solid #2a2e38; overflow-y: auto; padding: 12px; }
+  .sidebar.right { border-right: none; border-left: 1px solid #2a2e38; }
+  .section-title { font-size: 11px; font-weight: 600; color: #9aa0a6; text-transform: uppercase; letter-spacing: .08em; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #2a2e38; }
+  .section-title:first-child { margin-top: 0; }
+
+  /* Palette items (draggable) */
+  .palette-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: #1b1f27; border: 1px solid #2a2e38; cursor: grab; margin-bottom: 4px; font-size: 12px; user-select: none; }
+  .palette-item:hover { background: #232832; }
+  .palette-item:active { cursor: grabbing; }
+  .palette-item .swatch { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; }
+
+  /* Cable legend */
+  .cable-type { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; margin-bottom: 4px; }
+  .cable-type:hover { background: #1b1f27; }
+  .cable-type.active { background: #1b1f27; border-color: #4a5160; }
+  .cable-type .line { width: 24px; height: 3px; flex-shrink: 0; border-radius: 2px; }
+
+  /* Canvas */
+  .canvas-wrap { position: relative; overflow: auto; background: #0b0d11; background-image: linear-gradient(#191c22 1px, transparent 1px), linear-gradient(90deg, #191c22 1px, transparent 1px); background-size: 40px 40px; }
+  .canvas-inner { position: relative; margin: 20px auto; box-shadow: 0 8px 40px rgba(0,0,0,.4); }
+  .canvas-inner img { display: block; max-width: none; user-select: none; -webkit-user-drag: none; }
+  .canvas-inner .placeholder { width: 1200px; height: 700px; display: flex; align-items: center; justify-content: center; background: #1b1f27; color: #9aa0a6; text-align: center; flex-direction: column; gap: 12px; }
+  .canvas-inner .placeholder svg { width: 48px; height: 48px; opacity: .5; }
+  .svg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .svg-overlay > * { pointer-events: auto; }
+
+  /* Node & cable styles on SVG */
+  .node-group { cursor: grab; }
+  .node-group.dragging { cursor: grabbing; }
+  .node-group rect.node-box { stroke: #fff; stroke-width: 1.5; }
+  .node-group.selected rect.node-box { stroke: #ffd54f; stroke-width: 3; }
+  .node-group.connect-candidate rect.node-box { stroke: #4fc3f7; stroke-width: 3; stroke-dasharray: 4 2; }
+  .node-group text.node-label { fill: #fff; font-size: 11px; font-weight: 700; pointer-events: none; text-anchor: middle; dominant-baseline: middle; font-family: -apple-system, "Hiragino Sans", sans-serif; }
+  .node-group text.node-subtext { fill: #fff; font-size: 9px; pointer-events: none; text-anchor: middle; dominant-baseline: middle; opacity: .85; }
+
+  .cable { fill: none; stroke-width: 2.5; cursor: pointer; }
+  .cable:hover { stroke-width: 4; }
+  .cable.selected { stroke-width: 4; filter: drop-shadow(0 0 4px currentColor); }
+  .cable-label { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #000; stroke-width: 3; font-weight: 700; }
+
+  /* Right panel: properties */
+  .prop-row { margin-bottom: 10px; }
+  .prop-row label { display: block; font-size: 11px; color: #9aa0a6; margin-bottom: 4px; }
+  .prop-row input[type="text"], .prop-row select { width: 100%; background: #1b1f27; border: 1px solid #2a2e38; color: #e8eaed; padding: 6px 8px; border-radius: 4px; font-size: 12px; font-family: inherit; }
+  .prop-row input[type="text"]:focus, .prop-row select:focus { outline: 2px solid #1a73e8; outline-offset: -1px; }
+  .empty-state { color: #5f6368; font-size: 12px; text-align: center; padding: 24px 8px; line-height: 1.6; }
+
+  .mode-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #1b1f27; border: 1px solid #2a2e38; }
+  .mode-pill.connecting { background: #0d47a1; border-color: #1a73e8; color: #fff; animation: pulse 1.8s infinite; }
+  @keyframes pulse { 50% { opacity: .7; } }
+
+  .help { font-size: 11px; color: #9aa0a6; line-height: 1.6; padding: 8px; background: #1b1f27; border-radius: 6px; margin-top: 12px; }
+  .help strong { color: #e8eaed; }
+  .kbd { display: inline-block; padding: 1px 5px; background: #2a2e38; border: 1px solid #3a3e48; border-radius: 3px; font-size: 10px; font-family: monospace; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #323232; color: #fff; padding: 10px 20px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
+  .toast.show { opacity: 1; }
+
+  .scale-ctrl { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 11px; color: #9aa0a6; }
+  .scale-ctrl input[type="range"] { width: 100px; }
+
+  /* Cloud sync status */
+  .sync-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #1b1f27; border: 1px solid #2a2e38; margin-left: 12px; }
+  .sync-status .dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa0a6; }
+  .sync-status.online .dot { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+  .sync-status.syncing .dot { background: #ffc107; animation: pulse 1s infinite; }
+  .sync-status.offline .dot { background: #f44336; }
+  .sync-status.error .dot { background: #f44336; }
+  .room-label { color: #ffd54f; font-family: monospace; font-size: 10px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="toolbar">
+    <h1>📡 配信・配線配置設計ツール</h1>
+    <label class="btn">
+      🖼️ 背景画像読込
+      <input type="file" id="bgInput" accept="image/*">
+    </label>
+    <span class="sep"></span>
+    <button class="btn primary" id="saveBtn">💾 JSON保存</button>
+    <label class="btn">
+      📁 JSON読込
+      <input type="file" id="loadInput" accept=".json,application/json">
+    </label>
+    <span class="sep"></span>
+    <button class="btn" id="exportPngBtn">📷 PNG書き出し</button>
+    <span class="sep"></span>
+    <button class="btn" id="connectBtn">🔗 配線モード</button>
+    <button class="btn warn" id="resetBtn">🗑️ リセット</button>
+    <span class="sync-status offline" id="syncStatus" title="クラウド同期状態">
+      <span class="dot"></span>
+      <span id="syncStatusText">オフライン</span>
+      <span class="room-label" id="roomLabel"></span>
+    </span>
+    <div class="scale-ctrl">
+      <span>表示倍率</span>
+      <input type="range" id="zoomRange" min="30" max="150" value="70">
+      <span id="zoomLabel">70%</span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- Left: Palette -->
+    <div class="sidebar left">
+      <div class="section-title">📷 カメラ</div>
+      <div id="palette-camera"></div>
+      <div class="section-title">🖥️ モニター</div>
+      <div id="palette-monitor"></div>
+      <div class="section-title">🎚️ 処理機器</div>
+      <div id="palette-processor"></div>
+      <div class="section-title">🔌 その他</div>
+      <div id="palette-other"></div>
+
+      <div class="help">
+        <strong>使い方</strong><br>
+        ① 左の機材をドラッグ→配置図にドロップ<br>
+        ② 配置した機材をドラッグで移動<br>
+        ③ <span class="kbd">🔗配線モード</span> → 2つの機材をクリックで接続<br>
+        ④ 機材／配線をクリック→右で編集<br>
+        ⑤ <span class="kbd">Delete</span>キーで削除
+      </div>
+    </div>
+
+    <!-- Center: Canvas -->
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="canvas-inner" id="canvasInner">
+        <div class="placeholder" id="placeholder">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+          <div>上部の <strong>🖼️ 背景画像読込</strong> から<br>会場配置図（平面図）を読み込んでください</div>
+          <div style="font-size: 11px; opacity: .6;">読込後、左の機材パレットからドラッグで配置できます</div>
+        </div>
+        <svg class="svg-overlay" id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+
+    <!-- Right: Properties -->
+    <div class="sidebar right">
+      <div class="section-title">🛠️ 選択中アイテム</div>
+      <div id="propPanel">
+        <div class="empty-state">機材または配線を<br>選択してください</div>
+      </div>
+
+      <div class="section-title">🔌 ケーブル種別</div>
+      <div id="cableTypes"></div>
+
+      <div class="section-title">📊 サマリ</div>
+      <div id="summary" style="font-size: 11px; color: #9aa0a6; line-height: 1.7;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ╔══════════════════════════════════════════════════════════════════╗
+// ║  ▼▼▼  Firebase 設定  ▼▼▼                                         ║
+// ║  クラウド共有を有効にするには下の "YOUR_***" を実値に書き換え。   ║
+// ║  設定方法は同梱の「セットアップ手順.md」を参照。                  ║
+// ║  書き換えなければローカル動作のみ（クラウド共有なし）。           ║
+// ╚══════════════════════════════════════════════════════════════════╝
+const FIREBASE_CONFIG = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+// ルームID: 同じIDを開いた人が同じ設計を共有・同時編集します。
+// 別チーム・別案件で使うときは ?room=xxx をURLに付けるか、ここを書き換え。
+const DEFAULT_ROOM_ID = "jr-dx-2026";
+
+// ==================== Equipment & Cable Definitions ====================
+const EQUIPMENT_TYPES = {
+  // Cameras
+  cam_handy: { cat: 'camera', label: 'ハンディカム', short: 'HC', color: '#e53935', w: 72, h: 44 },
+  cam_fixed: { cat: 'camera', label: '固定カメラ', short: 'FC', color: '#fb8c00', w: 72, h: 44 },
+  cam_pov:   { cat: 'camera', label: 'POVカメラ',  short: 'POV', color: '#fdd835', w: 72, h: 44 },
+  cam_fpv:   { cat: 'camera', label: 'FPVカメラ',  short: 'FPV', color: '#8e24aa', w: 72, h: 44 },
+  cam_drone: { cat: 'camera', label: 'ドローンCAM', short: 'DRN', color: '#d81b60', w: 72, h: 44 },
+
+  // Monitors
+  mon_jikkyo: { cat: 'monitor', label: '実況用モニタ', short: '実況', color: '#1e88e5', w: 80, h: 50 },
+  mon_shinpan:{ cat: 'monitor', label: '審判用モニタ', short: '審判', color: '#039be5', w: 80, h: 50 },
+  mon_foh:    { cat: 'monitor', label: 'FOH用モニタ', short: 'FOH', color: '#00acc1', w: 80, h: 50 },
+  mon_multi:  { cat: 'monitor', label: 'マルチV',     short: 'MV',  color: '#00897b', w: 84, h: 54 },
+  mon_stage:  { cat: 'monitor', label: 'ステージLED', short: 'LED', color: '#43a047', w: 92, h: 56 },
+
+  // Processors
+  proc_sw:    { cat: 'processor', label: 'スイッチャー', short: 'SW',  color: '#546e7a', w: 84, h: 46 },
+  proc_mix:   { cat: 'processor', label: '音声ミキサー', short: 'MIX', color: '#6d4c41', w: 84, h: 46 },
+  proc_pc:    { cat: 'processor', label: '配信PC',      short: 'PC',  color: '#212121', w: 72, h: 44 },
+  proc_rec:   { cat: 'processor', label: '収録機',       short: 'REC', color: '#424242', w: 72, h: 44 },
+  proc_enc:   { cat: 'processor', label: 'エンコーダ',   short: 'ENC', color: '#37474f', w: 76, h: 44 },
+
+  // Other
+  other_split:{ cat: 'other', label: '分配器',       short: 'SPL', color: '#616161', w: 64, h: 36 },
+  other_conv: { cat: 'other', label: 'コンバーター', short: 'CNV', color: '#757575', w: 64, h: 36 },
+  other_hub:  { cat: 'other', label: 'ネットワークHUB', short: 'HUB', color: '#455a64', w: 64, h: 36 },
+  other_pdu:  { cat: 'other', label: '電源タップ',   short: 'PDU', color: '#bf360c', w: 64, h: 36 },
+  other_ant:  { cat: 'other', label: '受信アンテナ', short: 'ANT', color: '#4527a0', w: 64, h: 36 }
+};
+
+const CABLE_TYPES = {
+  sdi:   { label: 'SDI',   color: '#2196f3', dash: null },
+  hdmi:  { label: 'HDMI',  color: '#4caf50', dash: null },
+  lan:   { label: 'LAN',   color: '#ffc107', dash: null },
+  power: { label: '電源',  color: '#f44336', dash: null },
+  fiber: { label: '光',    color: '#9c27b0', dash: null },
+  rf:    { label: 'RF無線', color: '#ff5722', dash: '6 4' },
+  audio: { label: '音声',  color: '#00bcd4', dash: null }
+};
+
+// ==================== State ====================
+const state = {
+  bgImage: null,      // dataURL
+  bgW: 0, bgH: 0,
+  items: [],          // { id, type, x, y, label, note }
+  cables: [],         // { id, from, to, type, label }
+  selected: null,     // { kind: 'item'|'cable', id }
+  connectMode: false,
+  connectFirst: null, // item id
+  currentCable: 'sdi',
+  zoom: 0.7,
+  dragging: null      // { id, offsetX, offsetY }
+};
+
+let nextId = 1;
+const uid = () => 'n' + (nextId++);
+
+// ==================== DOM refs ====================
+const $ = (s) => document.querySelector(s);
+const svg = $('#svg');
+const canvasInner = $('#canvasInner');
+const placeholder = $('#placeholder');
+const propPanel = $('#propPanel');
+const summaryEl = $('#summary');
+
+// ==================== Palette build ====================
+function buildPalette() {
+  const groups = { camera: [], monitor: [], processor: [], other: [] };
+  Object.entries(EQUIPMENT_TYPES).forEach(([k, v]) => { groups[v.cat].push([k, v]); });
+  const targets = { camera: 'palette-camera', monitor: 'palette-monitor', processor: 'palette-processor', other: 'palette-other' };
+  Object.entries(groups).forEach(([cat, list]) => {
+    const el = document.getElementById(targets[cat]);
+    list.forEach(([k, v]) => {
+      const div = document.createElement('div');
+      div.className = 'palette-item';
+      div.draggable = true;
+      div.dataset.type = k;
+      div.innerHTML = `<span class="swatch" style="background:${v.color}">${v.short}</span><span>${v.label}</span>`;
+      div.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', k);
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      el.appendChild(div);
+    });
+  });
+}
+
+function buildCableTypes() {
+  const el = $('#cableTypes');
+  Object.entries(CABLE_TYPES).forEach(([k, v]) => {
+    const div = document.createElement('div');
+    div.className = 'cable-type' + (k === state.currentCable ? ' active' : '');
+    div.dataset.cable = k;
+    div.innerHTML = `<span class="line" style="background:${v.color}"></span><span>${v.label}</span>`;
+    div.addEventListener('click', () => {
+      state.currentCable = k;
+      document.querySelectorAll('.cable-type').forEach(x => x.classList.toggle('active', x.dataset.cable === k));
+      toast(`配線モード時に引くケーブル種別: ${v.label}`);
+    });
+    el.appendChild(div);
+  });
+}
+
+// ==================== Canvas drop handling ====================
+function setupCanvasDnd() {
+  canvasInner.addEventListener('dragover', (e) => {
+    if (!state.bgImage && placeholder.style.display !== 'none') return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  canvasInner.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const type = e.dataTransfer.getData('text/plain');
+    if (!type || !EQUIPMENT_TYPES[type]) return;
+    const rect = canvasInner.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / state.zoom;
+    const y = (e.clientY - rect.top) / state.zoom;
+    addItem(type, x, y);
+  });
+}
+
+function addItem(type, x, y, opts={}) {
+  const def = EQUIPMENT_TYPES[type];
+  const item = {
+    id: opts.id || uid(),
+    type,
+    x: Math.max(0, x - def.w/2),
+    y: Math.max(0, y - def.h/2),
+    label: opts.label || def.label,
+    note: opts.note || ''
+  };
+  state.items.push(item);
+  render();
+  selectItem(item.id);
+  if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+  return item;
+}
+
+// ==================== Background image ====================
+$('#bgInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => loadBackgroundDataURL(ev.target.result);
+  reader.readAsDataURL(file);
+});
+
+function loadBackgroundDataURL(dataURL) {
+  const img = new Image();
+  img.onload = () => {
+    state.bgImage = dataURL;
+    state.bgW = img.naturalWidth;
+    state.bgH = img.naturalHeight;
+    render();
+    if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+  };
+  img.src = dataURL;
+}
+
+// ==================== Render ====================
+function render() {
+  // Background
+  placeholder.style.display = state.bgImage ? 'none' : '';
+  let bgImg = canvasInner.querySelector('img.bg');
+  if (state.bgImage) {
+    if (!bgImg) {
+      bgImg = document.createElement('img');
+      bgImg.className = 'bg';
+      canvasInner.insertBefore(bgImg, svg);
+    }
+    bgImg.src = state.bgImage;
+    bgImg.style.width = (state.bgW * state.zoom) + 'px';
+    canvasInner.style.width = (state.bgW * state.zoom) + 'px';
+    canvasInner.style.height = (state.bgH * state.zoom) + 'px';
+    svg.setAttribute('viewBox', `0 0 ${state.bgW} ${state.bgH}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+  } else {
+    if (bgImg) bgImg.remove();
+    canvasInner.style.width = '';
+    canvasInner.style.height = '';
+    svg.setAttribute('viewBox', '0 0 1200 700');
+  }
+
+  // SVG contents
+  svg.innerHTML = '';
+
+  // Cables (drawn first so items sit on top)
+  state.cables.forEach(c => {
+    const from = state.items.find(i => i.id === c.from);
+    const to = state.items.find(i => i.id === c.to);
+    if (!from || !to) return;
+    const fromDef = EQUIPMENT_TYPES[from.type];
+    const toDef = EQUIPMENT_TYPES[to.type];
+    const x1 = from.x + fromDef.w/2;
+    const y1 = from.y + fromDef.h/2;
+    const x2 = to.x + toDef.w/2;
+    const y2 = to.y + toDef.h/2;
+
+    // curved path (slight) for readability
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    const dx = x2 - x1; const dy = y2 - y1;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    const ox = -dy / len * Math.min(30, len*0.12);
+    const oy = dx / len * Math.min(30, len*0.12);
+
+    const def = CABLE_TYPES[c.type];
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${x1} ${y1} Q ${mx+ox} ${my+oy} ${x2} ${y2}`);
+    path.setAttribute('class', 'cable' + (state.selected && state.selected.kind === 'cable' && state.selected.id === c.id ? ' selected' : ''));
+    path.setAttribute('stroke', def.color);
+    path.style.color = def.color;
+    if (def.dash) path.setAttribute('stroke-dasharray', def.dash);
+    path.addEventListener('click', (e) => { e.stopPropagation(); selectCable(c.id); });
+    svg.appendChild(path);
+
+    // Label
+    if (c.label) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('class', 'cable-label');
+      t.setAttribute('x', mx + ox);
+      t.setAttribute('y', my + oy);
+      t.textContent = c.label;
+      svg.appendChild(t);
+    }
+  });
+
+  // Items
+  state.items.forEach(item => {
+    const def = EQUIPMENT_TYPES[item.type];
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'node-group'
+      + (state.selected && state.selected.kind === 'item' && state.selected.id === item.id ? ' selected' : '')
+      + (state.connectMode && state.connectFirst && state.connectFirst !== item.id ? ' connect-candidate' : '')
+    );
+    g.setAttribute('transform', `translate(${item.x},${item.y})`);
+    g.dataset.id = item.id;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('class', 'node-box');
+    rect.setAttribute('width', def.w);
+    rect.setAttribute('height', def.h);
+    rect.setAttribute('rx', 6);
+    rect.setAttribute('fill', def.color);
+    g.appendChild(rect);
+
+    // Short label (type) + user label
+    const t1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t1.setAttribute('class', 'node-label');
+    t1.setAttribute('x', def.w/2);
+    t1.setAttribute('y', def.h/2 - 5);
+    t1.textContent = def.short;
+    g.appendChild(t1);
+
+    const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t2.setAttribute('class', 'node-subtext');
+    t2.setAttribute('x', def.w/2);
+    t2.setAttribute('y', def.h/2 + 10);
+    const lbl = item.label && item.label !== def.label ? item.label : def.label;
+    t2.textContent = lbl.length > 10 ? lbl.slice(0,9) + '…' : lbl;
+    g.appendChild(t2);
+
+    g.addEventListener('mousedown', onItemMouseDown);
+    g.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state.connectMode) {
+        handleConnectClick(item.id);
+      } else {
+        selectItem(item.id);
+      }
+    });
+    svg.appendChild(g);
+  });
+
+  // Click background to deselect
+  svg.onclick = () => { if (!state.connectMode) selectNone(); };
+
+  renderProps();
+  renderSummary();
+}
+
+// ==================== Drag items ====================
+function onItemMouseDown(e) {
+  if (state.connectMode) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const g = e.currentTarget;
+  const id = g.dataset.id;
+  const item = state.items.find(i => i.id === id);
+  if (!item) return;
+  const pt = svgPoint(e);
+  state.dragging = { id, offsetX: pt.x - item.x, offsetY: pt.y - item.y };
+  g.classList.add('dragging');
+  selectItem(id);
+
+  const onMove = (ev) => {
+    const p = svgPoint(ev);
+    item.x = p.x - state.dragging.offsetX;
+    item.y = p.y - state.dragging.offsetY;
+    render();
+  };
+  const onUp = () => {
+    state.dragging = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function svgPoint(evt) {
+  const rect = canvasInner.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  const sx = vb.width / rect.width;
+  const sy = vb.height / rect.height;
+  return { x: (evt.clientX - rect.left) * sx, y: (evt.clientY - rect.top) * sy };
+}
+
+// ==================== Selection ====================
+function selectItem(id) {
+  state.selected = { kind: 'item', id };
+  render();
+}
+function selectCable(id) {
+  state.selected = { kind: 'cable', id };
+  render();
+}
+function selectNone() {
+  state.selected = null;
+  render();
+}
+
+// ==================== Properties panel ====================
+function renderProps() {
+  if (!state.selected) {
+    propPanel.innerHTML = '<div class="empty-state">機材または配線を<br>選択してください</div>';
+    return;
+  }
+  if (state.selected.kind === 'item') {
+    const item = state.items.find(i => i.id === state.selected.id);
+    if (!item) { propPanel.innerHTML = ''; return; }
+    const def = EQUIPMENT_TYPES[item.type];
+    propPanel.innerHTML = `
+      <div style="font-size:11px;color:#9aa0a6;margin-bottom:8px;">機材: <span style="color:${def.color};font-weight:700;">${def.label}</span></div>
+      <div class="prop-row">
+        <label>ラベル名</label>
+        <input type="text" id="prop-label" value="${escapeHtml(item.label)}" />
+      </div>
+      <div class="prop-row">
+        <label>メモ</label>
+        <input type="text" id="prop-note" value="${escapeHtml(item.note)}" placeholder="例: Cam1 JR設備部" />
+      </div>
+      <div class="prop-row" style="display:flex;gap:8px;">
+        <span style="flex:1;font-size:11px;color:#9aa0a6;">X: ${Math.round(item.x)}</span>
+        <span style="flex:1;font-size:11px;color:#9aa0a6;">Y: ${Math.round(item.y)}</span>
+      </div>
+      <button class="btn warn" id="del-item" style="width:100%;justify-content:center;">🗑️ この機材を削除</button>
+    `;
+    $('#prop-label').addEventListener('input', (e) => { item.label = e.target.value; render(); });
+    $('#prop-note').addEventListener('input', (e) => { item.note = e.target.value; });
+    $('#del-item').addEventListener('click', () => deleteSelected());
+  } else {
+    const cable = state.cables.find(c => c.id === state.selected.id);
+    if (!cable) { propPanel.innerHTML = ''; return; }
+    const from = state.items.find(i => i.id === cable.from);
+    const to = state.items.find(i => i.id === cable.to);
+    const opts = Object.entries(CABLE_TYPES).map(([k, v]) => `<option value="${k}" ${cable.type===k?'selected':''}>${v.label}</option>`).join('');
+    propPanel.innerHTML = `
+      <div style="font-size:11px;color:#9aa0a6;margin-bottom:8px;">🔗 配線</div>
+      <div style="font-size:12px;margin-bottom:10px;">
+        <strong>${escapeHtml(from?.label || '?')}</strong><br>
+        <span style="color:#9aa0a6;">→</span><br>
+        <strong>${escapeHtml(to?.label || '?')}</strong>
+      </div>
+      <div class="prop-row">
+        <label>ケーブル種別</label>
+        <select id="prop-type">${opts}</select>
+      </div>
+      <div class="prop-row">
+        <label>ラベル（任意：長さ／本数など）</label>
+        <input type="text" id="prop-cable-label" value="${escapeHtml(cable.label || '')}" placeholder="例: 15m ×1" />
+      </div>
+      <button class="btn warn" id="del-cable" style="width:100%;justify-content:center;">🗑️ この配線を削除</button>
+    `;
+    $('#prop-type').addEventListener('change', (e) => { cable.type = e.target.value; render(); });
+    $('#prop-cable-label').addEventListener('input', (e) => { cable.label = e.target.value; render(); });
+    $('#del-cable').addEventListener('click', () => deleteSelected());
+  }
+}
+
+function deleteSelected() {
+  if (!state.selected) return;
+  if (state.selected.kind === 'item') {
+    const id = state.selected.id;
+    state.items = state.items.filter(i => i.id !== id);
+    state.cables = state.cables.filter(c => c.from !== id && c.to !== id);
+  } else {
+    state.cables = state.cables.filter(c => c.id !== state.selected.id);
+  }
+  state.selected = null;
+  render();
+  if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected) {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    deleteSelected();
+    e.preventDefault();
+  }
+  if (e.key === 'Escape') {
+    if (state.connectMode) toggleConnectMode();
+    else selectNone();
+  }
+});
+
+// ==================== Connect mode ====================
+$('#connectBtn').addEventListener('click', toggleConnectMode);
+function toggleConnectMode() {
+  state.connectMode = !state.connectMode;
+  state.connectFirst = null;
+  $('#connectBtn').classList.toggle('primary', state.connectMode);
+  $('#connectBtn').innerHTML = state.connectMode ? '⏹️ 配線モード終了' : '🔗 配線モード';
+  toast(state.connectMode ? `配線モードON: 2つの機材をクリックして接続 (種別: ${CABLE_TYPES[state.currentCable].label})` : '配線モード終了');
+  render();
+}
+
+function handleConnectClick(itemId) {
+  if (!state.connectFirst) {
+    state.connectFirst = itemId;
+    render();
+    toast('接続先の機材をクリック');
+  } else if (state.connectFirst === itemId) {
+    state.connectFirst = null;
+    render();
+  } else {
+    state.cables.push({
+      id: uid(),
+      from: state.connectFirst,
+      to: itemId,
+      type: state.currentCable,
+      label: ''
+    });
+    state.connectFirst = null;
+    render();
+    if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    toast(`配線を追加 (${CABLE_TYPES[state.currentCable].label})`);
+  }
+}
+
+// ==================== Save/Load JSON ====================
+$('#saveBtn').addEventListener('click', () => {
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    bgImage: state.bgImage,
+    bgW: state.bgW,
+    bgH: state.bgH,
+    items: state.items,
+    cables: state.cables
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  a.download = `配線設計_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('JSONファイルを保存しました');
+});
+
+$('#loadInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.items || !data.cables) throw new Error('Invalid format');
+      state.items = data.items;
+      state.cables = data.cables;
+      state.bgImage = data.bgImage || null;
+      state.bgW = data.bgW || 0;
+      state.bgH = data.bgH || 0;
+      // recalc nextId
+      const maxId = Math.max(0, ...state.items.concat(state.cables).map(x => parseInt(String(x.id).replace(/\D/g,'')) || 0));
+      nextId = maxId + 1;
+      state.selected = null;
+      render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+      toast('JSONファイルを読み込みました');
+    } catch (err) {
+      toast('読み込みエラー: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// ==================== Reset ====================
+$('#resetBtn').addEventListener('click', () => {
+  const msg = cloudSync.enabled
+    ? '⚠️ クラウド共有中です。リセットすると全員の画面からも消えます。本当にリセットしますか？'
+    : 'すべてリセットしますか？（背景・機材・配線すべて削除されます）';
+  if (!confirm(msg)) return;
+  state.items = [];
+  state.cables = [];
+  state.selected = null;
+  state.bgImage = null;
+  state.bgW = 0; state.bgH = 0;
+  render();
+  if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+  toast('リセットしました');
+});
+
+// ==================== PNG Export ====================
+$('#exportPngBtn').addEventListener('click', async () => {
+  if (!state.bgImage) { toast('先に背景画像を読み込んでください'); return; }
+  const canvas = document.createElement('canvas');
+  canvas.width = state.bgW;
+  canvas.height = state.bgH;
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  img.onload = async () => {
+    ctx.drawImage(img, 0, 0);
+    // Serialize SVG to draw on top
+    const svgClone = svg.cloneNode(true);
+    svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svgClone.setAttribute('width', state.bgW);
+    svgClone.setAttribute('height', state.bgH);
+    const svgStr = new XMLSerializer().serializeToString(svgClone);
+    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    const svgImg = new Image();
+    svgImg.onload = () => {
+      ctx.drawImage(svgImg, 0, 0, state.bgW, state.bgH);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((blob) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        a.download = `配線設計_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.png`;
+        a.click();
+        toast('PNG画像を書き出しました');
+      }, 'image/png');
+    };
+    svgImg.src = url;
+  };
+  img.src = state.bgImage;
+});
+
+// ==================== Zoom ====================
+$('#zoomRange').addEventListener('input', (e) => {
+  state.zoom = parseInt(e.target.value) / 100;
+  $('#zoomLabel').textContent = Math.round(state.zoom * 100) + '%';
+  render();
+});
+
+// ==================== Summary ====================
+function renderSummary() {
+  const itemCount = state.items.length;
+  const cableCount = state.cables.length;
+  const byType = {};
+  state.items.forEach(i => { byType[i.type] = (byType[i.type] || 0) + 1; });
+  const byCable = {};
+  state.cables.forEach(c => { byCable[c.type] = (byCable[c.type] || 0) + 1; });
+
+  let html = `機材合計: <strong>${itemCount}</strong>／配線合計: <strong>${cableCount}</strong>`;
+  if (Object.keys(byCable).length) {
+    html += '<br><br><span style="color:#e8eaed;">ケーブル内訳:</span>';
+    Object.entries(byCable).forEach(([t, n]) => {
+      const d = CABLE_TYPES[t];
+      html += `<br><span style="display:inline-block;width:10px;height:10px;background:${d.color};border-radius:2px;vertical-align:middle;margin-right:4px;"></span>${d.label}: <strong>${n}</strong>本`;
+    });
+  }
+  summaryEl.innerHTML = html;
+}
+
+// ==================== Helpers ====================
+function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600); }
+
+// ==================== Cloud Sync (Firebase) ====================
+let cloudSync = { enabled: false, markDirty: () => {}, db: null, ref: null };
+
+function setSyncStatus(state, text, room) {
+  const el = $('#syncStatus');
+  el.classList.remove('online', 'syncing', 'offline', 'error');
+  el.classList.add(state);
+  $('#syncStatusText').textContent = text;
+  if (room) $('#roomLabel').textContent = ' / ' + room;
+}
+
+function initCloudSync() {
+  // Skip if config is still placeholder
+  if (FIREBASE_CONFIG.apiKey === 'YOUR_API_KEY' || !FIREBASE_CONFIG.databaseURL) {
+    setSyncStatus('offline', 'ローカル動作中', '');
+    return;
+  }
+  if (typeof firebase === 'undefined') {
+    setSyncStatus('error', 'SDK読込失敗', '');
+    console.error('Firebase SDK not loaded');
+    return;
+  }
+
+  // Determine room from ?room=xxx URL param, fallback to default
+  const params = new URLSearchParams(window.location.search);
+  const roomId = (params.get('room') || DEFAULT_ROOM_ID).replace(/[^a-zA-Z0-9_\-]/g, '');
+
+  try {
+    const app = firebase.initializeApp(FIREBASE_CONFIG);
+    const db = firebase.database();
+    const stateRef = db.ref('rooms/' + roomId);
+    cloudSync.enabled = true;
+    cloudSync.db = db;
+    cloudSync.ref = stateRef;
+    cloudSync.roomId = roomId;
+
+    setSyncStatus('syncing', '接続中…', roomId);
+
+    // Listen for remote changes
+    let isApplyingRemote = false;
+    stateRef.on('value', (snap) => {
+      const data = snap.val();
+      if (!data) {
+        setSyncStatus('online', '同期中（空）', roomId);
+        return;
+      }
+      // Skip echo of our own write
+      if (data._writer === cloudSync.clientId && Date.now() - (data.updatedAt || 0) < 3000) {
+        setSyncStatus('online', '同期中', roomId);
+        return;
+      }
+      isApplyingRemote = true;
+      state.items = data.items || [];
+      state.cables = data.cables || [];
+      if (data.bgImage && data.bgImage !== state.bgImage) {
+        state.bgImage = data.bgImage;
+        state.bgW = data.bgW || 0;
+        state.bgH = data.bgH || 0;
+      }
+      // Recalc nextId
+      const allIds = state.items.concat(state.cables).map(x => parseInt(String(x.id).replace(/\D/g,'')) || 0);
+      nextId = Math.max(nextId, ...(allIds.length ? allIds : [0])) + 1;
+      render();
+      isApplyingRemote = false;
+      setSyncStatus('online', '同期中', roomId);
+    }, (err) => {
+      console.error('Firebase listen error:', err);
+      setSyncStatus('error', 'エラー: ' + err.code, roomId);
+    });
+
+    // Track connection state
+    db.ref('.info/connected').on('value', (snap) => {
+      if (snap.val() === true) {
+        setSyncStatus('online', '同期中', roomId);
+      } else {
+        setSyncStatus('syncing', '再接続中…', roomId);
+      }
+    });
+
+    // Push local changes (debounced)
+    cloudSync.clientId = 'c' + Math.random().toString(36).slice(2, 9);
+    let saveTimer = null;
+    cloudSync.markDirty = () => {
+      if (isApplyingRemote) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        setSyncStatus('syncing', '保存中…', roomId);
+        stateRef.set({
+          items: state.items,
+          cables: state.cables,
+          bgImage: state.bgImage,
+          bgW: state.bgW,
+          bgH: state.bgH,
+          updatedAt: Date.now(),
+          _writer: cloudSync.clientId
+        }).then(() => {
+          setSyncStatus('online', '同期中', roomId);
+        }).catch((err) => {
+          console.error('Firebase write error:', err);
+          setSyncStatus('error', '保存失敗', roomId);
+        });
+      }, 600);
+    };
+
+    toast(`☁️ クラウド同期ON（ルーム: ${roomId}）`);
+  } catch (err) {
+    console.error('Firebase init error:', err);
+    setSyncStatus('error', '初期化失敗', '');
+  }
+}
+
+// Hook all state mutations: input events on prop panel
+document.addEventListener('input', (e) => {
+  if (e.target.id && e.target.id.startsWith('prop-')) cloudSync.markDirty();
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id && e.target.id.startsWith('prop-')) cloudSync.markDirty();
+});
+// After drag (mouseup at document level)
+let _dragWasActive = false;
+document.addEventListener('mousedown', () => { if (state.dragging) _dragWasActive = true; });
+document.addEventListener('mouseup', () => {
+  setTimeout(() => {
+    if (_dragWasActive) { cloudSync.markDirty(); _dragWasActive = false; }
+  }, 60);
+});
+
+// ==================== Init ====================
+buildPalette();
+buildCableTypes();
+setupCanvasDnd();
+render();
+$('#zoomLabel').textContent = Math.round(state.zoom * 100) + '%';
+initCloudSync();
+
+// autosave to window for debug
+window._designer = { state, render, cloudSync };
+</script>
+</body>
+</html>
