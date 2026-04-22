@@ -70,6 +70,16 @@
   .cable:hover { stroke-width: 4; }
   .cable.selected { stroke-width: 4; filter: drop-shadow(0 0 4px currentColor); }
   .cable-label { fill: #fff; font-size: 10px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #000; stroke-width: 3; font-weight: 700; }
+  .cable-handle { fill: #ffd54f; stroke: #1a1d24; stroke-width: 2; cursor: grab; }
+  .cable-handle:active { cursor: grabbing; }
+  .cable-handle-line { stroke: #ffd54f; stroke-width: 1; stroke-dasharray: 3 3; opacity: .4; pointer-events: none; }
+
+  /* Summary list */
+  .sum-cat { color: #e8eaed; font-weight: 600; margin-top: 8px; }
+  .sum-row { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 14px; font-size: 11px; }
+  .sum-row .sw { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .sum-row .nm { flex: 1; color: #c8cdd6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sum-row .ct { color: #fff; font-weight: 700; }
 
   /* Right panel: properties */
   .prop-row { margin-bottom: 10px; }
@@ -109,12 +119,6 @@
     <label class="btn">
       🖼️ 背景画像読込
       <input type="file" id="bgInput" accept="image/*">
-    </label>
-    <span class="sep"></span>
-    <button class="btn primary" id="saveBtn">💾 JSON保存</button>
-    <label class="btn">
-      📁 JSON読込
-      <input type="file" id="loadInput" accept=".json,application/json">
     </label>
     <span class="sep"></span>
     <button class="btn" id="exportPngBtn">📷 PNG書き出し</button>
@@ -437,32 +441,93 @@ function render() {
     const x2 = to.x + toDef.w/2;
     const y2 = to.y + toDef.h/2;
 
-    // curved path (slight) for readability
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
-    const dx = x2 - x1; const dy = y2 - y1;
-    const len = Math.sqrt(dx*dx + dy*dy) || 1;
-    const ox = -dy / len * Math.min(30, len*0.12);
-    const oy = dx / len * Math.min(30, len*0.12);
+    // ----- 形状の判定 -----
+    // c.shape: 'line' | 'curve' | 'orthogonal'（既定: 'curve'）
+    // c.cx/c.cy:    制御点の絶対座標（曲線時のみ）
+    // c.waypoints:  通過点の配列 [{x,y}, ...]（直角時のみ。曲線でも追加情報として可）
+    const shape = c.shape === 'line' || c.shape === 'orthogonal' ? c.shape : 'curve';
+    const waypoints = Array.isArray(c.waypoints) ? c.waypoints : [];
+    let cpX, cpY, d, labelX, labelY;
+
+    if (shape === 'line') {
+      d = `M ${x1} ${y1} L ${x2} ${y2}`;
+      labelX = (x1 + x2) / 2;
+      labelY = (y1 + y2) / 2;
+    } else if (shape === 'orthogonal') {
+      // 直角ルーティング: start → [waypoints] → end の各区間でL字に曲がる
+      const pts = [{x: x1, y: y1}, ...waypoints, {x: x2, y: y2}];
+      let pathStr = `M ${pts[0].x} ${pts[0].y}`;
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i-1], b = pts[i];
+        // |dx| > |dy| なら水平→垂直、そうでなければ垂直→水平
+        if (Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)) {
+          pathStr += ` L ${b.x} ${a.y} L ${b.x} ${b.y}`;
+        } else {
+          pathStr += ` L ${a.x} ${b.y} L ${b.x} ${b.y}`;
+        }
+      }
+      d = pathStr;
+      // ラベルは経路の中央付近（waypoints があればその中間、なければ単純中点）
+      if (waypoints.length > 0) {
+        const mid = waypoints[Math.floor(waypoints.length/2)];
+        labelX = mid.x; labelY = mid.y;
+      } else {
+        labelX = (x1 + x2) / 2;
+        labelY = (y1 + y2) / 2;
+      }
+    } else {
+      // curve
+      if (typeof c.cx === 'number' && typeof c.cy === 'number') {
+        cpX = c.cx; cpY = c.cy;
+      } else {
+        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        cpX = mx + (-dy / len) * Math.min(30, len*0.12);
+        cpY = my + ( dx / len) * Math.min(30, len*0.12);
+      }
+      d = `M ${x1} ${y1} Q ${cpX} ${cpY} ${x2} ${y2}`;
+      labelX = (x1 + 2*cpX + x2) / 4;
+      labelY = (y1 + 2*cpY + y2) / 4;
+    }
 
     const def = CABLE_TYPES[c.type] || CABLE_TYPES[FALLBACK_CABLE_TYPE];
+    const isSelected = state.selected && state.selected.kind === 'cable' && state.selected.id === c.id;
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', `M ${x1} ${y1} Q ${mx+ox} ${my+oy} ${x2} ${y2}`);
-    path.setAttribute('class', 'cable' + (state.selected && state.selected.kind === 'cable' && state.selected.id === c.id ? ' selected' : ''));
+    path.setAttribute('d', d);
+    path.setAttribute('class', 'cable' + (isSelected ? ' selected' : ''));
     path.setAttribute('stroke', def.color);
     path.style.color = def.color;
     if (def.dash) path.setAttribute('stroke-dasharray', def.dash);
+    path.dataset.cableId = c.id;
     path.addEventListener('click', (e) => { e.stopPropagation(); selectCable(c.id); });
+    path.addEventListener('dblclick', onCableDblClick);
     svg.appendChild(path);
 
-    // Label
+    // ラベル
     if (c.label) {
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.setAttribute('class', 'cable-label');
-      t.setAttribute('x', mx + ox);
-      t.setAttribute('y', my + oy);
+      t.setAttribute('x', labelX);
+      t.setAttribute('y', labelY);
       t.textContent = c.label;
       svg.appendChild(t);
+    }
+
+    // 選択中なら形状に応じてハンドルを表示
+    if (isSelected) {
+      if (shape === 'curve') {
+        const aux = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        aux.setAttribute('class', 'cable-handle-line');
+        aux.setAttribute('d', `M ${x1} ${y1} L ${cpX} ${cpY} L ${x2} ${y2}`);
+        svg.appendChild(aux);
+        appendCableHandle(svg, cpX, cpY, c.id, -1, 'curve-cp');
+      } else if (shape === 'orthogonal') {
+        // 各waypointにハンドル
+        waypoints.forEach((wp, idx) => {
+          appendCableHandle(svg, wp.x, wp.y, c.id, idx, 'waypoint');
+        });
+      }
     }
   });
 
@@ -557,6 +622,143 @@ function svgPoint(evt) {
   return { x: (evt.clientX - rect.left) * sx, y: (evt.clientY - rect.top) * sy };
 }
 
+// SVGに配線ハンドル(○)を追加するヘルパ
+// kind = 'curve-cp' (曲線の制御点) | 'waypoint' (直角の通過点)
+function appendCableHandle(svg, x, y, cableId, idx, kind) {
+  const handle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  handle.setAttribute('class', 'cable-handle');
+  handle.setAttribute('cx', x);
+  handle.setAttribute('cy', y);
+  handle.setAttribute('r', kind === 'waypoint' ? 6 : 7);
+  handle.dataset.cableId = cableId;
+  handle.dataset.kind = kind;
+  handle.dataset.idx = String(idx);
+  handle.addEventListener('mousedown', onHandleMouseDown);
+  // Shift+クリックでwaypoint削除
+  handle.addEventListener('click', (e) => {
+    if (kind === 'waypoint' && (e.shiftKey || e.altKey)) {
+      e.stopPropagation();
+      const cable = state.cables.find(c => c.id === cableId);
+      if (cable && Array.isArray(cable.waypoints)) {
+        cable.waypoints.splice(parseInt(handle.dataset.idx, 10), 1);
+        render();
+        if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+        toast('通過点を削除しました');
+      }
+    }
+  });
+  svg.appendChild(handle);
+}
+
+// 配線をダブルクリック → 直角モードならその位置にwaypoint追加
+function onCableDblClick(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const cableId = e.currentTarget.dataset.cableId;
+  const cable = state.cables.find(c => c.id === cableId);
+  if (!cable) return;
+  // 直角モードでなければ自動で切替
+  if (cable.shape !== 'orthogonal') {
+    cable.shape = 'orthogonal';
+    cable.waypoints = cable.waypoints || [];
+  }
+  const p = svgPoint(e);
+  // クリック位置に最も近い区間に挿入する（簡略：単純末尾追加）
+  // より自然にするため、既存wp/端点との距離に応じて挿入位置を決める
+  const from = state.items.find(i => i.id === cable.from);
+  const to   = state.items.find(i => i.id === cable.to);
+  const fromDef = EQUIPMENT_TYPES[from?.type] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+  const toDef   = EQUIPMENT_TYPES[to?.type]   || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+  const startPt = { x: from.x + fromDef.w/2, y: from.y + fromDef.h/2 };
+  const endPt   = { x: to.x   + toDef.w/2,   y: to.y   + toDef.h/2 };
+  const seq = [startPt, ...cable.waypoints, endPt];
+  // 最も近い区間を見つける
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0; i < seq.length - 1; i++) {
+    const d = distPointToSeg(p, seq[i], seq[i+1]);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  cable.waypoints.splice(bestIdx, 0, { x: p.x, y: p.y });
+  selectCable(cable.id);
+  render();
+  if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+  toast('通過点を追加しました（Shift+クリックで削除）');
+}
+
+// 既存の start→[wp]→end 経路で最も長い区間を見つけ、その中点に新しいwaypointを挿入
+function addWaypointAtLongestSegment(cable) {
+  if (!Array.isArray(cable.waypoints)) cable.waypoints = [];
+  const from = state.items.find(i => i.id === cable.from);
+  const to   = state.items.find(i => i.id === cable.to);
+  if (!from || !to) return;
+  const fromDef = EQUIPMENT_TYPES[from.type] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+  const toDef   = EQUIPMENT_TYPES[to.type]   || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+  const startPt = { x: from.x + fromDef.w/2, y: from.y + fromDef.h/2 };
+  const endPt   = { x: to.x   + toDef.w/2,   y: to.y   + toDef.h/2 };
+  const seq = [startPt, ...cable.waypoints, endPt];
+  // 最長区間を探す（マンハッタン距離で評価＝直角配線の見た目に合うため）
+  let bestIdx = 0, bestLen = -1;
+  for (let i = 0; i < seq.length - 1; i++) {
+    const a = seq[i], b = seq[i+1];
+    const len = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
+    if (len > bestLen) { bestLen = len; bestIdx = i; }
+  }
+  // その区間の中点に挿入。少しオフセットを入れて視認性UP
+  const a = seq[bestIdx], b = seq[bestIdx + 1];
+  const midX = (a.x + b.x) / 2;
+  const midY = (a.y + b.y) / 2;
+  // 真っ直ぐの線上だと角に見えないので、軸方向にちょっとずらす
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const offset = 30;
+  const newPt = Math.abs(dx) >= Math.abs(dy)
+    ? { x: midX, y: midY + offset }   // 横長の区間なら下にずらす
+    : { x: midX + offset, y: midY };  // 縦長の区間なら右にずらす
+  cable.waypoints.splice(bestIdx, 0, newPt);
+}
+
+function distPointToSeg(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx*dx + dy*dy || 1;
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.x + t * dx, cy = a.y + t * dy;
+  return Math.hypot(p.x - cx, p.y - cy);
+}
+
+// ハンドルをドラッグ → 制御点 or waypoint を更新
+function onHandleMouseDown(e) {
+  if (e.shiftKey || e.altKey) return; // 削除操作と競合しないように
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.currentTarget;
+  const cableId = handle.dataset.cableId;
+  const kind = handle.dataset.kind;
+  const idx = parseInt(handle.dataset.idx, 10);
+  const cable = state.cables.find(c => c.id === cableId);
+  if (!cable) return;
+  state.draggingHandle = cableId;
+
+  const onMove = (ev) => {
+    const p = svgPoint(ev);
+    if (kind === 'curve-cp') {
+      cable.shape = 'curve';
+      cable.cx = p.x;
+      cable.cy = p.y;
+    } else if (kind === 'waypoint' && Array.isArray(cable.waypoints) && cable.waypoints[idx]) {
+      cable.waypoints[idx] = { x: p.x, y: p.y };
+    }
+    render();
+  };
+  const onUp = () => {
+    state.draggingHandle = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 // ==================== Selection ====================
 function selectItem(id) {
   state.selected = { kind: 'item', id };
@@ -606,6 +808,9 @@ function renderProps() {
     const from = state.items.find(i => i.id === cable.from);
     const to = state.items.find(i => i.id === cable.to);
     const opts = Object.entries(CABLE_TYPES).map(([k, v]) => `<option value="${k}" ${cable.type===k?'selected':''}>${v.label}</option>`).join('');
+    const curShape = cable.shape === 'line' || cable.shape === 'orthogonal' ? cable.shape : 'curve';
+    const hasCustomCp = typeof cable.cx === 'number' && typeof cable.cy === 'number';
+    const wpCount = Array.isArray(cable.waypoints) ? cable.waypoints.length : 0;
     propPanel.innerHTML = `
       <div style="font-size:11px;color:#9aa0a6;margin-bottom:8px;">🔗 配線</div>
       <div style="font-size:12px;margin-bottom:10px;">
@@ -618,13 +823,92 @@ function renderProps() {
         <select id="prop-type">${opts}</select>
       </div>
       <div class="prop-row">
+        <label>形状</label>
+        <div style="display:flex;gap:4px;">
+          <button class="btn ${curShape==='line'       ? 'primary' : ''}" id="shape-line"  style="flex:1;justify-content:center;padding:6px 4px;">直線</button>
+          <button class="btn ${curShape==='curve'      ? 'primary' : ''}" id="shape-curve" style="flex:1;justify-content:center;padding:6px 4px;">カーブ</button>
+          <button class="btn ${curShape==='orthogonal' ? 'primary' : ''}" id="shape-ortho" style="flex:1;justify-content:center;padding:6px 4px;">直角</button>
+        </div>
+        ${curShape==='curve' ? `<div style="font-size:10px;color:#9aa0a6;margin-top:6px;line-height:1.4;">💡 黄色の○ハンドルをドラッグして<br>カーブを自由に調整できます</div>` : ''}
+        ${curShape==='curve' && hasCustomCp ? `<button class="btn ghost" id="shape-reset" style="width:100%;justify-content:center;margin-top:6px;font-size:11px;">↺ 自動カーブに戻す</button>` : ''}
+        ${curShape==='orthogonal' ? `
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <button class="btn primary" id="ortho-add" style="flex:2;justify-content:center;">＋ 角を追加</button>
+            ${wpCount > 0 ? `<button class="btn ghost" id="ortho-clear" style="flex:1;justify-content:center;font-size:11px;">↺ 全削除</button>` : ''}
+          </div>
+          <div style="font-size:10px;color:#9aa0a6;margin-top:6px;line-height:1.5;">
+            <span style="color:#ffd54f;">角(通過点): <strong>${wpCount}</strong>個</span><br>
+            💡 ボタンで角を増やす／黄○ハンドルをドラッグで移動<br>
+            💡 配線をダブルクリックで角追加／Shift+クリックで個別削除
+          </div>
+          ${wpCount > 0 ? `
+            <div id="wp-list" style="margin-top:8px;border-top:1px solid #2a2e38;padding-top:6px;">
+              ${cable.waypoints.map((wp, i) => `
+                <div style="display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0;">
+                  <span style="color:#ffd54f;font-weight:700;width:16px;">${i+1}</span>
+                  <span style="color:#9aa0a6;flex:1;">X:${Math.round(wp.x)} Y:${Math.round(wp.y)}</span>
+                  <button class="btn warn wp-del" data-idx="${i}" style="padding:2px 6px;font-size:10px;">✕</button>
+                </div>`).join('')}
+            </div>
+          ` : ''}
+        ` : ''}
+      </div>
+      <div class="prop-row">
         <label>ラベル（任意：長さ／本数など）</label>
         <input type="text" id="prop-cable-label" value="${escapeHtml(cable.label || '')}" placeholder="例: 15m ×1" />
       </div>
       <button class="btn warn" id="del-cable" style="width:100%;justify-content:center;">🗑️ この配線を削除</button>
     `;
-    $('#prop-type').addEventListener('change', (e) => { cable.type = e.target.value; render(); });
-    $('#prop-cable-label').addEventListener('input', (e) => { cable.label = e.target.value; render(); });
+    $('#prop-type').addEventListener('change', (e) => {
+      cable.type = e.target.value; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    $('#prop-cable-label').addEventListener('input', (e) => {
+      cable.label = e.target.value; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    $('#shape-line').addEventListener('click', () => {
+      cable.shape = 'line'; delete cable.cx; delete cable.cy; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    $('#shape-curve').addEventListener('click', () => {
+      cable.shape = 'curve'; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    $('#shape-ortho').addEventListener('click', () => {
+      cable.shape = 'orthogonal';
+      if (!Array.isArray(cable.waypoints)) cable.waypoints = [];
+      delete cable.cx; delete cable.cy;
+      render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+      toast('直角モード: 配線をダブルクリックで通過点追加');
+    });
+    const resetBtn = $('#shape-reset');
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      delete cable.cx; delete cable.cy; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    const clrBtn = $('#ortho-clear');
+    if (clrBtn) clrBtn.addEventListener('click', () => {
+      cable.waypoints = []; render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+    });
+    const addBtn = $('#ortho-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      addWaypointAtLongestSegment(cable);
+      render();
+      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+      toast(`角を追加 (合計 ${cable.waypoints.length} 個)`);
+    });
+    document.querySelectorAll('.wp-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx, 10);
+        cable.waypoints.splice(idx, 1);
+        render();
+        if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
+      });
+    });
     $('#del-cable').addEventListener('click', () => deleteSelected());
   }
 }
@@ -689,59 +973,6 @@ function handleConnectClick(itemId) {
     toast(`配線を追加 (${CABLE_TYPES[state.currentCable].label})`);
   }
 }
-
-// ==================== Save/Load JSON ====================
-$('#saveBtn').addEventListener('click', () => {
-  const data = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    bgImage: state.bgImage,
-    bgW: state.bgW,
-    bgH: state.bgH,
-    items: state.items,
-    cables: state.cables
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  a.download = `配線設計_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast('JSONファイルを保存しました');
-});
-
-$('#loadInput').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (ev) => {
-    try {
-      const data = JSON.parse(ev.target.result);
-      if (!data.items || !data.cables) throw new Error('Invalid format');
-      const m = migrateData(data.items, data.cables);
-      state.items = m.items;
-      state.cables = m.cables;
-      if (m.migrated > 0) toast(`旧データ ${m.migrated} 件を新しい型へ移行しました`);
-      state.bgImage = data.bgImage || null;
-      state.bgW = data.bgW || 0;
-      state.bgH = data.bgH || 0;
-      // recalc nextId
-      const maxId = Math.max(0, ...state.items.concat(state.cables).map(x => parseInt(String(x.id).replace(/\D/g,'')) || 0));
-      nextId = maxId + 1;
-      state.selected = null;
-      render();
-      if (typeof cloudSync !== 'undefined') cloudSync.markDirty();
-      toast('JSONファイルを読み込みました');
-    } catch (err) {
-      toast('読み込みエラー: ' + err.message);
-    }
-  };
-  reader.readAsText(file);
-  e.target.value = '';
-});
 
 // ==================== Reset ====================
 $('#resetBtn').addEventListener('click', () => {
@@ -812,14 +1043,40 @@ function renderSummary() {
   const byCable = {};
   state.cables.forEach(c => { byCable[c.type] = (byCable[c.type] || 0) + 1; });
 
-  let html = `機材合計: <strong>${itemCount}</strong>／配線合計: <strong>${cableCount}</strong>`;
-  if (Object.keys(byCable).length) {
-    html += '<br><br><span style="color:#e8eaed;">ケーブル内訳:</span>';
-    Object.entries(byCable).forEach(([t, n]) => {
-      const d = CABLE_TYPES[t] || CABLE_TYPES[FALLBACK_CABLE_TYPE];
-      html += `<br><span style="display:inline-block;width:10px;height:10px;background:${d.color};border-radius:2px;vertical-align:middle;margin-right:4px;"></span>${d.label}: <strong>${n}</strong>本`;
+  const CAT_LABEL = { camera: '📷 カメラ', monitor: '🖥️ モニター', processor: '🎚️ 処理機器', other: '🔌 その他' };
+  const CAT_ORDER = ['camera', 'monitor', 'processor', 'other'];
+
+  let html = `<div style="font-size:12px;">機材合計: <strong style="color:#fff;">${itemCount}</strong>　／　配線合計: <strong style="color:#fff;">${cableCount}</strong></div>`;
+
+  // ----- 機材内訳（カテゴリ→型） -----
+  if (itemCount > 0) {
+    html += '<div class="sum-cat" style="margin-top:10px;border-top:1px solid #2a2e38;padding-top:8px;">機材内訳</div>';
+    CAT_ORDER.forEach(cat => {
+      // この cat に属する型ごとの個数
+      const inCat = Object.entries(byType)
+        .filter(([t]) => (EQUIPMENT_TYPES[t] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE]).cat === cat)
+        .sort((a, b) => b[1] - a[1]);
+      if (!inCat.length) return;
+      const catTotal = inCat.reduce((s, [, n]) => s + n, 0);
+      html += `<div class="sum-cat">${CAT_LABEL[cat]} <span style="color:#9aa0a6;font-weight:400;">(${catTotal})</span></div>`;
+      inCat.forEach(([t, n]) => {
+        const d = EQUIPMENT_TYPES[t] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+        html += `<div class="sum-row"><span class="sw" style="background:${d.color};"></span><span class="nm">${escapeHtml(d.label)}</span><span class="ct">${n}</span></div>`;
+      });
     });
   }
+
+  // ----- 配線内訳 -----
+  if (cableCount > 0) {
+    html += '<div class="sum-cat" style="margin-top:10px;border-top:1px solid #2a2e38;padding-top:8px;">配線内訳</div>';
+    Object.entries(byCable)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([t, n]) => {
+        const d = CABLE_TYPES[t] || CABLE_TYPES[FALLBACK_CABLE_TYPE];
+        html += `<div class="sum-row"><span class="sw" style="background:${d.color};"></span><span class="nm">${escapeHtml(d.label)}</span><span class="ct">${n}本</span></div>`;
+      });
+  }
+
   summaryEl.innerHTML = html;
 }
 
