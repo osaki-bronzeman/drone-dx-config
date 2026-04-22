@@ -248,6 +248,37 @@ const CABLE_TYPES = {
   power: { label: '電源', color: '#f44336', dash: '6 4' }
 };
 
+// ==================== 旧データの自動マイグレーション ====================
+// v1の機材／配線型を v2 にマップ。Firebase上の既存データを壊さずに移行する。
+const ITEM_TYPE_MIGRATIONS = {
+  'mon_stage': 'mon_screen'  // 旧「ステージLED」→ 新「メインスクリーン」が用途的に近い
+};
+const CABLE_TYPE_MIGRATIONS = {
+  'lan':   'sdi',   // データ伝送系はSDIにまとめる
+  'fiber': 'sdi',
+  'rf':    'sdi',
+  'audio': 'hdmi'   // 音声系はHDMIにまとめる
+};
+const FALLBACK_ITEM_TYPE  = 'other_conv'; // 不明な機材型はコンバータ扱いで一旦表示
+const FALLBACK_CABLE_TYPE = 'sdi';
+
+function migrateData(items, cables) {
+  let migrated = 0;
+  const safeItems = (items || []).map(i => {
+    if (!i || !i.type) return null;
+    if (ITEM_TYPE_MIGRATIONS[i.type]) { migrated++; return { ...i, type: ITEM_TYPE_MIGRATIONS[i.type] }; }
+    if (!EQUIPMENT_TYPES[i.type])    { migrated++; return { ...i, type: FALLBACK_ITEM_TYPE, _origType: i.type }; }
+    return i;
+  }).filter(Boolean);
+  const safeCables = (cables || []).map(c => {
+    if (!c || !c.type) return null;
+    if (CABLE_TYPE_MIGRATIONS[c.type]) { migrated++; return { ...c, type: CABLE_TYPE_MIGRATIONS[c.type] }; }
+    if (!CABLE_TYPES[c.type])         { migrated++; return { ...c, type: FALLBACK_CABLE_TYPE }; }
+    return c;
+  }).filter(Boolean);
+  return { items: safeItems, cables: safeCables, migrated };
+}
+
 // ==================== State ====================
 const state = {
   bgImage: null,      // dataURL
@@ -399,8 +430,8 @@ function render() {
     const from = state.items.find(i => i.id === c.from);
     const to = state.items.find(i => i.id === c.to);
     if (!from || !to) return;
-    const fromDef = EQUIPMENT_TYPES[from.type];
-    const toDef = EQUIPMENT_TYPES[to.type];
+    const fromDef = EQUIPMENT_TYPES[from.type] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
+    const toDef   = EQUIPMENT_TYPES[to.type]   || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
     const x1 = from.x + fromDef.w/2;
     const y1 = from.y + fromDef.h/2;
     const x2 = to.x + toDef.w/2;
@@ -414,7 +445,7 @@ function render() {
     const ox = -dy / len * Math.min(30, len*0.12);
     const oy = dx / len * Math.min(30, len*0.12);
 
-    const def = CABLE_TYPES[c.type];
+    const def = CABLE_TYPES[c.type] || CABLE_TYPES[FALLBACK_CABLE_TYPE];
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', `M ${x1} ${y1} Q ${mx+ox} ${my+oy} ${x2} ${y2}`);
     path.setAttribute('class', 'cable' + (state.selected && state.selected.kind === 'cable' && state.selected.id === c.id ? ' selected' : ''));
@@ -437,7 +468,7 @@ function render() {
 
   // Items
   state.items.forEach(item => {
-    const def = EQUIPMENT_TYPES[item.type];
+    const def = EQUIPMENT_TYPES[item.type] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('class', 'node-group'
       + (state.selected && state.selected.kind === 'item' && state.selected.id === item.id ? ' selected' : '')
@@ -549,7 +580,7 @@ function renderProps() {
   if (state.selected.kind === 'item') {
     const item = state.items.find(i => i.id === state.selected.id);
     if (!item) { propPanel.innerHTML = ''; return; }
-    const def = EQUIPMENT_TYPES[item.type];
+    const def = EQUIPMENT_TYPES[item.type] || EQUIPMENT_TYPES[FALLBACK_ITEM_TYPE];
     propPanel.innerHTML = `
       <div style="font-size:11px;color:#9aa0a6;margin-bottom:8px;">機材: <span style="color:${def.color};font-weight:700;">${def.label}</span></div>
       <div class="prop-row">
@@ -690,8 +721,10 @@ $('#loadInput').addEventListener('change', (e) => {
     try {
       const data = JSON.parse(ev.target.result);
       if (!data.items || !data.cables) throw new Error('Invalid format');
-      state.items = data.items;
-      state.cables = data.cables;
+      const m = migrateData(data.items, data.cables);
+      state.items = m.items;
+      state.cables = m.cables;
+      if (m.migrated > 0) toast(`旧データ ${m.migrated} 件を新しい型へ移行しました`);
       state.bgImage = data.bgImage || null;
       state.bgW = data.bgW || 0;
       state.bgH = data.bgH || 0;
@@ -783,7 +816,7 @@ function renderSummary() {
   if (Object.keys(byCable).length) {
     html += '<br><br><span style="color:#e8eaed;">ケーブル内訳:</span>';
     Object.entries(byCable).forEach(([t, n]) => {
-      const d = CABLE_TYPES[t];
+      const d = CABLE_TYPES[t] || CABLE_TYPES[FALLBACK_CABLE_TYPE];
       html += `<br><span style="display:inline-block;width:10px;height:10px;background:${d.color};border-radius:2px;vertical-align:middle;margin-right:4px;"></span>${d.label}: <strong>${n}</strong>本`;
     });
   }
@@ -846,8 +879,13 @@ function initCloudSync() {
         return;
       }
       isApplyingRemote = true;
-      state.items = data.items || [];
-      state.cables = data.cables || [];
+      const m = migrateData(data.items, data.cables);
+      state.items = m.items;
+      state.cables = m.cables;
+      if (m.migrated > 0) {
+        console.info(`[migration] ${m.migrated} legacy entries migrated`);
+        cloudSync.markDirty(); // 移行結果をFirebaseに書き戻す
+      }
       if (data.bgImage && data.bgImage !== state.bgImage) {
         state.bgImage = data.bgImage;
         state.bgW = data.bgW || 0;
